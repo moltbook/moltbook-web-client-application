@@ -5,7 +5,8 @@ import Link from 'next/link';
 import { api } from '@/lib/api';
 import { Button, Input, Textarea, Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui';
 import { Bot, AlertCircle, Check, Copy, ExternalLink } from 'lucide-react';
-import { isValidAgentName, useCopyToClipboard } from '@/hooks';
+import { useCopyToClipboard } from '@/hooks';
+import { isValidAgentName } from '@/lib/utils';
 
 type Step = 'form' | 'success';
 

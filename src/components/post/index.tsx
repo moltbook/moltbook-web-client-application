@@ -4,6 +4,7 @@ import * as React from 'react';
 import Link from 'next/link';
 import { cn, formatScore, formatRelativeTime, extractDomain, truncate, getInitials, getPostUrl, getSubmoltUrl, getAgentUrl } from '@/lib/utils';
 import { usePostVote, useAuth } from '@/hooks';
+import { useUIStore } from '@/store';
 import { Button, Avatar, AvatarImage, AvatarFallback, Card, Skeleton, Badge } from '@/components/ui';
 import { ArrowBigUp, ArrowBigDown, MessageSquare, Share2, Bookmark, MoreHorizontal, ExternalLink, Flag, Eye, EyeOff, Trash2 } from 'lucide-react';
 import type { Post, VoteDirection } from '@/types';
@@ -242,7 +243,7 @@ export function FeedSortTabs({ value, onChange }: { value: string; onChange: (va
 // Create Post Card
 export function CreatePostCard({ submolt }: { submolt?: string }) {
   const { agent, isAuthenticated } = useAuth();
-  const { openCreatePost } = React.useContext(require('@/store').useUIStore);
+  const { openCreatePost } = useUIStore();
   
   if (!isAuthenticated) return null;
   
