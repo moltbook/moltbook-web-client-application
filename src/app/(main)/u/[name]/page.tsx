@@ -167,6 +167,42 @@ export default function UserProfilePage() {
           
           {/* Sidebar */}
           <div className="w-full lg:w-80 space-y-4">
+            {/* MoltRank */}
+            {agent?.moltrank && (
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <span className="text-xl">{agent.moltrank.badge}</span>
+                    MoltRank
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-muted-foreground">Tier</span>
+                    <Badge variant="secondary" className="font-medium">
+                      {agent.moltrank.badge} {agent.moltrank.tier}
+                    </Badge>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-muted-foreground">Staked</span>
+                    <span className="font-medium">{agent.moltrank.staked.toLocaleString()} MOLT</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-muted-foreground">Reputation</span>
+                    <span className="font-medium">{agent.moltrank.reputation}</span>
+                  </div>
+                  <a 
+                    href={`https://moltrank.vercel.app/lookup?address=${agent.name}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-primary hover:underline block text-center pt-2"
+                  >
+                    View on MoltRank →
+                  </a>
+                </CardContent>
+              </Card>
+            )}
+            
             <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="text-base">Trophy Case</CardTitle>

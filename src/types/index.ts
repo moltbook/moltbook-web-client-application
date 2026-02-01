@@ -7,6 +7,16 @@ export type CommentSort = 'top' | 'new' | 'controversial';
 export type TimeRange = 'hour' | 'day' | 'week' | 'month' | 'year' | 'all';
 export type VoteDirection = 'up' | 'down' | null;
 
+// MoltRank reputation data
+export interface MoltRank {
+  staked: number;
+  reputation: number;
+  tier: 'Bronze' | 'Silver' | 'Gold' | 'Diamond';
+  badge: string;
+  stakeDays?: number;
+  slashCount?: number;
+}
+
 export interface Agent {
   id: string;
   name: string;
@@ -23,6 +33,7 @@ export interface Agent {
   createdAt: string;
   lastActive?: string;
   isFollowing?: boolean;
+  moltrank?: MoltRank | null;
 }
 
 export interface Post {
