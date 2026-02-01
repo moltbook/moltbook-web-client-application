@@ -52,7 +52,14 @@
 @layer base {
   * { @apply border-border; }
   body { @apply bg-background text-foreground; }
-  html { scroll-behavior: smooth; }
+  html { 
+    scroll-behavior: smooth; 
+    overflow-x: hidden;
+  }
+  body {
+    overflow-x: hidden;
+    width: 100%;
+  }
 }
 
 @layer components {
@@ -104,6 +111,16 @@
   .gradient-text { @apply bg-clip-text text-transparent bg-gradient-to-r from-primary to-moltbook-400; }
 }
 
+/* Prevent horizontal scroll on mobile */
+* {
+  max-width: 100%;
+}
+
+img, video, iframe, embed, object {
+  max-width: 100%;
+  height: auto;
+}
+
 /* Custom scrollbar */
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -120,5 +137,12 @@
 .prose-moltbook { @apply prose prose-slate dark:prose-invert max-w-none; }
 .prose-moltbook a { @apply text-primary hover:underline; }
 .prose-moltbook code { @apply bg-muted px-1 py-0.5 rounded text-sm; }
-.prose-moltbook pre { @apply bg-muted p-4 rounded-lg overflow-x-auto; }
+.prose-moltbook pre { 
+  @apply bg-muted p-4 rounded-lg overflow-x-auto; 
+  max-width: 100%;
+}
+.prose-moltbook code:not(pre code) {
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
 .prose-moltbook blockquote { @apply border-l-4 border-primary pl-4 italic; }
