@@ -1,0 +1,167 @@
+name: MoltBot Auto Reply
+
+on:
+  issues:
+    types: [opened, edited]
+  issue_comment:
+    types: [created]
+
+jobs:
+  auto-reply:
+    runs-on: ubuntu-latest
+    # Don't reply to own comments
+    if: github.event.comment.user.login != 'github-actions[bot]' || github.event_name == 'issues'
+    
+    steps:
+      - name: Generate AI Response
+        uses: actions/github-script@v7
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        with:
+          script: |
+            const issue = context.payload.issue;
+            const comment = context.payload.comment;
+            const isNewIssue = context.eventName === 'issues' && context.payload.action === 'opened';
+            const isComment = context.eventName === 'issue_comment';
+            
+            // Skip if bot comment
+            if (isComment && comment.user.type === 'Bot') {
+              console.log('Skipping bot comment');
+              return;
+            }
+            
+            // Build context
+            let userMessage = '';
+            if (isNewIssue) {
+              userMessage = `New Issue Opened:
+            
+            Title: ${issue.title}
+            Author: @${issue.user.login}
+            Labels: ${issue.labels.map(l => l.name).join(', ') || 'none'}
+            
+            Body:
+            ${issue.body || 'No description provided'}
+            
+            Generate a helpful first response. Ask for more details if needed. Be friendly and professional.`;
+            } else if (isComment) {
+              userMessage = `Follow-up Comment on Issue:
+            
+            Issue Title: ${issue.title}
+            Comment Author: @${comment.user.login}
+            
+            Comment:
+            ${comment.body}
+            
+            Original Issue:
+            ${issue.body || 'No description'}
+            
+            Generate a helpful response to this comment. Be friendly and professional.`;
+            }
+            
+            // Call Claude API
+            const response = await fetch('https://api.anthropic.com/v1/messages', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'x-api-key': process.env.ANTHROPIC_API_KEY,
+                'anthropic-version': '2023-06-01'
+              },
+              body: JSON.stringify({
+                model: 'claude-sonnet-4-20250514',
+                max_tokens: 1024,
+                system: `You are MoltBot, the friendly AI assistant for Moltbook - The Social Network for AI Agents.
+
+            Your role:
+            - Help users with issues and questions about Moltbook repositories
+            - Ask clarifying questions when issue details are unclear
+            - Provide helpful debugging steps for bug reports
+            - Be friendly, professional, and concise
+            - Use markdown formatting for readability
+            - If it's a bug report, ask for: steps to reproduce, expected vs actual behavior, error messages, environment details
+            - If it's a feature request, acknowledge it positively and ask for use cases
+            - If it's a question, try to help or direct them to relevant documentation
+
+            Repositories context:
+            - moltbook-frontend: Next.js 14 web app
+            - moltbook-api: Express.js REST API backend
+            - moltbook-agent-development-kit: SDK for TypeScript, Swift, Kotlin
+            - moltbook-auth: Authentication system
+            - moltbook-voting: Voting & karma system
+            - moltbook-comments: Comment system
+            - moltbook-feed: Feed generation
+            - moltbook-rate-limiter: Rate limiting
+
+            Keep responses concise but helpful. Max 2-3 paragraphs.`,
+                messages: [{
+                  role: 'user',
+                  content: userMessage
+                }]
+              })
+            });
+            
+            if (!response.ok) {
+              console.log('API Error:', await response.text());
+              return;
+            }
+            
+            const data = await response.json();
+            const reply = data.content[0].text;
+            
+            // Post comment
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue.number,
+              body: reply + '\n\n---\n🤖 *MoltBot - Automated Response* | [Learn more](https://github.com/moltbook)'
+            });
+            
+            console.log('Reply posted successfully!');
+
+      - name: Add Labels for New Issues
+        if: github.event_name == 'issues' && github.event.action == 'opened'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issue = context.payload.issue;
+            const title = issue.title.toLowerCase();
+            const body = (issue.body || '').toLowerCase();
+            const content = title + ' ' + body;
+            
+            const labels = [];
+            
+            // Auto-detect issue type
+            if (content.includes('bug') || content.includes('error') || content.includes('failed') || content.includes('crash') || content.includes('not working')) {
+              labels.push('bug');
+            }
+            if (content.includes('feature') || content.includes('request') || content.includes('add') || content.includes('implement')) {
+              labels.push('enhancement');
+            }
+            if (content.includes('question') || content.includes('how to') || content.includes('help')) {
+              labels.push('question');
+            }
+            if (content.includes('api')) {
+              labels.push('api');
+            }
+            if (content.includes('ui') || content.includes('frontend') || content.includes('design')) {
+              labels.push('frontend');
+            }
+            if (content.includes('docs') || content.includes('documentation')) {
+              labels.push('documentation');
+            }
+            
+            // Always add needs-triage
+            labels.push('needs-triage');
+            
+            if (labels.length > 0) {
+              try {
+                await github.rest.issues.addLabels({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issue.number,
+                  labels: labels
+                });
+                console.log('Labels added:', labels);
+              } catch (e) {
+                console.log('Could not add labels (they may not exist):', e.message);
+              }
+            }
