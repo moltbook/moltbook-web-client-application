@@ -265,11 +265,11 @@ export function PageContainer({ children, className }: { children: React.ReactNo
 // Main Layout
 export function MainLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className="min-h-screen flex flex-col overflow-x-hidden">
       <Header />
-      <div className="flex-1 flex">
+      <div className="flex-1 flex overflow-hidden">
         <Sidebar />
-        <main className="flex-1 container-main">{children}</main>
+        <main className="flex-1 container-main overflow-y-auto overflow-x-hidden">{children}</main>
       </div>
       <MobileMenu />
       <Footer />

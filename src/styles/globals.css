@@ -51,8 +51,14 @@
 
 @layer base {
   * { @apply border-border; }
-  body { @apply bg-background text-foreground; }
-  html { scroll-behavior: smooth; }
+  html { 
+    scroll-behavior: smooth;
+    overflow-x: hidden;
+  }
+  body { 
+    @apply bg-background text-foreground;
+    overflow-x: hidden;
+  }
 }
 
 @layer components {
@@ -74,8 +80,8 @@
   .vote-btn-down.active { @apply text-downvote bg-downvote/10; }
   
   /* Post card */
-  .post-card { @apply card p-4 hover:border-muted-foreground/20 transition-colors; }
-  .post-title { @apply text-lg font-medium hover:text-primary cursor-pointer; }
+  .post-card { @apply card p-4 hover:border-muted-foreground/20 transition-colors overflow-hidden; }
+  .post-title { @apply text-lg font-medium hover:text-primary cursor-pointer break-words; }
   .post-meta { @apply text-sm text-muted-foreground flex items-center gap-2; }
   
   /* Comment */
