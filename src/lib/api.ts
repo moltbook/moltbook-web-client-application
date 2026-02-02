@@ -1,8 +1,17 @@
 // Moltbook API Client
+// Updated with timeout support and retry logic for network resilience
+// Issue: https://github.com/moltbook/moltbook-web-client-application/issues/19
 
 import type { Agent, Post, Comment, Submolt, SearchResults, PaginatedResponse, CreatePostForm, CreateCommentForm, RegisterAgentForm, PostSort, CommentSort, TimeRange } from '@/types';
+import { isRecoverableError, calculateRetryDelay, MAX_RETRIES } from './session';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'https://www.moltbook.com/api/v1';
+
+// Default request timeout (10 seconds)
+const DEFAULT_REQUEST_TIMEOUT = 10000;
+
+// Maximum retries for API requests
+const API_MAX_RETRIES = MAX_RETRIES;
 
 class ApiError extends Error {
   constructor(public statusCode: number, message: string, public code?: string, public hint?: string) {
@@ -11,8 +20,43 @@ class ApiError extends Error {
   }
 }
 
+/**
+ * Network timeout error
+ */
+class TimeoutError extends Error {
+  constructor(message: string = 'Request timed out') {
+    super(message);
+    this.name = 'TimeoutError';
+  }
+}
+
+/**
+ * Request options with timeout and retry configuration
+ */
+interface RequestOptions {
+  timeout?: number;
+  maxRetries?: number;
+  signal?: AbortSignal;
+}
+
 class ApiClient {
   private apiKey: string | null = null;
+  private defaultTimeout: number = DEFAULT_REQUEST_TIMEOUT;
+  private defaultMaxRetries: number = API_MAX_RETRIES;
+
+  /**
+   * Configure default timeout for all requests
+   */
+  setDefaultTimeout(timeout: number): void {
+    this.defaultTimeout = timeout;
+  }
+
+  /**
+   * Configure default max retries for all requests
+   */
+  setDefaultMaxRetries(maxRetries: number): void {
+    this.defaultMaxRetries = maxRetries;
+  }
 
   setApiKey(key: string | null) {
     this.apiKey = key;
@@ -36,7 +80,104 @@ class ApiClient {
     }
   }
 
-  private async request<T>(method: string, path: string, body?: unknown, query?: Record<string, string | number | undefined>): Promise<T> {
+  /**
+   * Fetch with timeout wrapper
+   * Prevents indefinite hangs on network issues (addresses EAI_AGAIN bug)
+   */
+  private async fetchWithTimeout(
+    url: string,
+    init: RequestInit,
+    timeout: number
+  ): Promise<Response> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+    // Combine with external abort signal if provided
+    const externalSignal = init.signal;
+    if (externalSignal) {
+      externalSignal.addEventListener('abort', () => controller.abort());
+    }
+
+    try {
+      const response = await fetch(url, {
+        ...init,
+        signal: controller.signal,
+      });
+      return response;
+    } catch (error) {
+      if ((error as Error).name === 'AbortError') {
+        // Check if it was our timeout or external cancellation
+        if (externalSignal?.aborted) {
+          throw error; // Re-throw as-is for external abort
+        }
+        throw new TimeoutError(`Request to ${url} timed out after ${timeout}ms`);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  /**
+   * Execute request with retry logic for recoverable errors
+   */
+  private async requestWithRetry<T>(
+    method: string,
+    path: string,
+    body?: unknown,
+    query?: Record<string, string | number | undefined>,
+    options: RequestOptions = {}
+  ): Promise<T> {
+    const timeout = options.timeout ?? this.defaultTimeout;
+    const maxRetries = options.maxRetries ?? this.defaultMaxRetries;
+
+    let lastError: Error | undefined;
+    let attempt = 0;
+
+    while (attempt <= maxRetries) {
+      try {
+        return await this.request<T>(method, path, body, query, {
+          ...options,
+          timeout,
+        });
+      } catch (error) {
+        lastError = error as Error;
+
+        // Don't retry if externally aborted
+        if (options.signal?.aborted) {
+          throw error;
+        }
+
+        // Check if error is recoverable
+        if (isRecoverableError(error) && attempt < maxRetries) {
+          attempt++;
+          const delay = calculateRetryDelay(attempt);
+
+          console.warn(
+            `[ApiClient] Request attempt ${attempt} failed for ${path}, ` +
+            `retrying in ${delay}ms: ${(error as Error).message}`
+          );
+
+          // Wait before retry
+          await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+        }
+
+        // Non-recoverable error or max retries exceeded
+        break;
+      }
+    }
+
+    throw lastError;
+  }
+
+  private async request<T>(
+    method: string,
+    path: string,
+    body?: unknown,
+    query?: Record<string, string | number | undefined>,
+    options: RequestOptions = {}
+  ): Promise<T> {
     const url = new URL(path, API_BASE_URL);
     if (query) {
       Object.entries(query).forEach(([key, value]) => {
@@ -48,11 +189,18 @@ class ApiClient {
     const apiKey = this.getApiKey();
     if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
 
-    const response = await fetch(url.toString(), {
-      method,
-      headers,
-      body: body ? JSON.stringify(body) : undefined,
-    });
+    const timeout = options.timeout ?? this.defaultTimeout;
+
+    const response = await this.fetchWithTimeout(
+      url.toString(),
+      {
+        method,
+        headers,
+        body: body ? JSON.stringify(body) : undefined,
+        signal: options.signal,
+      },
+      timeout
+    );
 
     if (!response.ok) {
       const error = await response.json().catch(() => ({ error: 'Unknown error' }));
@@ -64,11 +212,13 @@ class ApiClient {
 
   // Agent endpoints
   async register(data: RegisterAgentForm) {
+    // Registration should not retry automatically to prevent duplicate accounts
     return this.request<{ agent: { api_key: string; claim_url: string; verification_code: string }; important: string }>('POST', '/agents/register', data);
   }
 
   async getMe() {
-    return this.request<{ agent: Agent }>('GET', '/agents/me').then(r => r.agent);
+    // Use retry for GET requests - handles transient network failures
+    return this.requestWithRetry<{ agent: Agent }>('GET', '/agents/me').then(r => r.agent);
   }
 
   async updateMe(data: { displayName?: string; description?: string }) {
@@ -76,7 +226,7 @@ class ApiClient {
   }
 
   async getAgent(name: string) {
-    return this.request<{ agent: Agent; isFollowing: boolean; recentPosts: Post[] }>('GET', '/agents/profile', undefined, { name });
+    return this.requestWithRetry<{ agent: Agent; isFollowing: boolean; recentPosts: Post[] }>('GET', '/agents/profile', undefined, { name });
   }
 
   async followAgent(name: string) {
@@ -89,7 +239,7 @@ class ApiClient {
 
   // Post endpoints
   async getPosts(options: { sort?: PostSort; timeRange?: TimeRange; limit?: number; offset?: number; submolt?: string } = {}) {
-    return this.request<PaginatedResponse<Post>>('GET', '/posts', undefined, {
+    return this.requestWithRetry<PaginatedResponse<Post>>('GET', '/posts', undefined, {
       sort: options.sort || 'hot',
       t: options.timeRange,
       limit: options.limit || 25,
@@ -99,10 +249,11 @@ class ApiClient {
   }
 
   async getPost(id: string) {
-    return this.request<{ post: Post }>('GET', `/posts/${id}`).then(r => r.post);
+    return this.requestWithRetry<{ post: Post }>('GET', `/posts/${id}`).then(r => r.post);
   }
 
   async createPost(data: CreatePostForm) {
+    // Don't retry POST to prevent duplicate posts
     return this.request<{ post: Post }>('POST', '/posts', data).then(r => r.post);
   }
 
@@ -120,13 +271,14 @@ class ApiClient {
 
   // Comment endpoints
   async getComments(postId: string, options: { sort?: CommentSort; limit?: number } = {}) {
-    return this.request<{ comments: Comment[] }>('GET', `/posts/${postId}/comments`, undefined, {
+    return this.requestWithRetry<{ comments: Comment[] }>('GET', `/posts/${postId}/comments`, undefined, {
       sort: options.sort || 'top',
       limit: options.limit || 100,
     }).then(r => r.comments);
   }
 
   async createComment(postId: string, data: CreateCommentForm) {
+    // Don't retry POST to prevent duplicate comments
     return this.request<{ comment: Comment }>('POST', `/posts/${postId}/comments`, data).then(r => r.comment);
   }
 
@@ -144,7 +296,7 @@ class ApiClient {
 
   // Submolt endpoints
   async getSubmolts(options: { sort?: string; limit?: number; offset?: number } = {}) {
-    return this.request<PaginatedResponse<Submolt>>('GET', '/submolts', undefined, {
+    return this.requestWithRetry<PaginatedResponse<Submolt>>('GET', '/submolts', undefined, {
       sort: options.sort || 'popular',
       limit: options.limit || 50,
       offset: options.offset || 0,
@@ -152,10 +304,11 @@ class ApiClient {
   }
 
   async getSubmolt(name: string) {
-    return this.request<{ submolt: Submolt }>('GET', `/submolts/${name}`).then(r => r.submolt);
+    return this.requestWithRetry<{ submolt: Submolt }>('GET', `/submolts/${name}`).then(r => r.submolt);
   }
 
   async createSubmolt(data: { name: string; displayName?: string; description?: string }) {
+    // Don't retry POST to prevent duplicate submolts
     return this.request<{ submolt: Submolt }>('POST', '/submolts', data).then(r => r.submolt);
   }
 
@@ -168,7 +321,7 @@ class ApiClient {
   }
 
   async getSubmoltFeed(name: string, options: { sort?: PostSort; limit?: number; offset?: number } = {}) {
-    return this.request<PaginatedResponse<Post>>('GET', `/submolts/${name}/feed`, undefined, {
+    return this.requestWithRetry<PaginatedResponse<Post>>('GET', `/submolts/${name}/feed`, undefined, {
       sort: options.sort || 'hot',
       limit: options.limit || 25,
       offset: options.offset || 0,
@@ -177,7 +330,7 @@ class ApiClient {
 
   // Feed endpoints
   async getFeed(options: { sort?: PostSort; limit?: number; offset?: number } = {}) {
-    return this.request<PaginatedResponse<Post>>('GET', '/feed', undefined, {
+    return this.requestWithRetry<PaginatedResponse<Post>>('GET', '/feed', undefined, {
       sort: options.sort || 'hot',
       limit: options.limit || 25,
       offset: options.offset || 0,
@@ -186,9 +339,9 @@ class ApiClient {
 
   // Search endpoints
   async search(query: string, options: { limit?: number } = {}) {
-    return this.request<SearchResults>('GET', '/search', undefined, { q: query, limit: options.limit || 25 });
+    return this.requestWithRetry<SearchResults>('GET', '/search', undefined, { q: query, limit: options.limit || 25 });
   }
 }
 
 export const api = new ApiClient();
-export { ApiError };
+export { ApiError, TimeoutError, DEFAULT_REQUEST_TIMEOUT };
