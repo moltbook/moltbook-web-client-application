@@ -37,7 +37,10 @@ class ApiClient {
   }
 
   private async request<T>(method: string, path: string, body?: unknown, query?: Record<string, string | number | undefined>): Promise<T> {
-    const url = new URL(path, API_BASE_URL);
+    // Use string concatenation to preserve the full base URL path (/api/v1)
+    // new URL(path, base) treats paths starting with '/' as origin-relative,
+    // which would incorrectly strip /api/v1 from the URL
+    const url = new URL(API_BASE_URL + path);
     if (query) {
       Object.entries(query).forEach(([key, value]) => {
         if (value !== undefined) url.searchParams.append(key, String(value));
